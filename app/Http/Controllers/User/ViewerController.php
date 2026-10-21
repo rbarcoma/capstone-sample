@@ -4,9 +4,9 @@ namespace App\Http\Controllers\User;
 
 use App\Http\Controllers\Controller;
 use App\Models\DssResult;
-use App\Models\ForecastResult;
 use App\Models\ProcessedRecord;
 use App\Models\Report;
+use App\Support\ForecastPeriod;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
@@ -17,6 +17,7 @@ class ViewerController extends Controller
     public function dashboard()
     {
         return Inertia::render('User/Dashboard', $this->sharedData());
+
     }
 
     public function analytics()
@@ -27,20 +28,19 @@ class ViewerController extends Controller
     public function forecasts()
     {
         return Inertia::render('User/ForecastResults', [
-            'latestForecast' => ForecastResult::with('user:id,name')->latest('predicted_at')->first(),
-            'forecastHistory' => ForecastResult::with('user:id,name')->latest('predicted_at')->take(20)->get(),
+            'latestForecast' => ForecastPeriod::current()->with('user:id,name')->latest('predicted_at')->first(),
+            'forecastHistory' => ForecastPeriod::throughNext()->with('user:id,name')->latest('predicted_at')->take(20)->get(),
         ]);
     }
 
     public function decisionSupport()
     {
         return Inertia::render('User/DecisionSupportResults', [
-            'latestDss' => DssResult::with(['user:id,name', 'forecastResult:id,year,month'])
-                ->whereNotNull('forecast_result_id')
+            'latestDss' => ForecastPeriod::currentDss()->with(['user:id,name', 'forecastResult:id,year,month'])
                 ->latest('updated_at')
                 ->first(),
             'history' => DssResult::with(['user:id,name', 'forecastResult:id,year,month'])
-                ->whereNotNull('forecast_result_id')
+                ->whereIn('forecast_result_id', ForecastPeriod::throughNext()->select('id'))
                 ->latest('updated_at')
                 ->take(20)
                 ->get(),
@@ -57,9 +57,8 @@ class ViewerController extends Controller
     private function sharedData(): array
     {
         $latestProcessed = ProcessedRecord::query()->orderByDesc('year')->orderByDesc('month')->first();
-        $latestForecast = ForecastResult::latest('predicted_at')->first();
-        $latestDss = DssResult::query()
-            ->whereNotNull('forecast_result_id')
+        $latestForecast = ForecastPeriod::current()->latest('predicted_at')->first();
+        $latestDss = ForecastPeriod::currentDss()
             ->latest('updated_at')
             ->first();
         $trend = ProcessedRecord::query()
@@ -93,7 +92,7 @@ class ViewerController extends Controller
             ],
             'recommendations' => $latestDss?->recommendations ?? [],
             'priorityActions' => $latestDss?->priority_actions ?? [],
-            'forecastHistory' => ForecastResult::latest('predicted_at')->take(10)->get(),
+            'forecastHistory' => ForecastPeriod::throughNext()->latest('predicted_at')->take(10)->get(),
             'trend' => $trend,
         ];
     }
@@ -105,12 +104,12 @@ class ViewerController extends Controller
             ->orderBy('month')
             ->get()
             ->keyBy(fn ($record) => $record->year . '-' . str_pad((string) $record->month, 2, '0', STR_PAD_LEFT));
-        $forecastRecords = ForecastResult::query()
+        $forecastRecords = ForecastPeriod::throughNext()
             ->orderBy('year')
             ->orderBy('month')
             ->get()
             ->keyBy(fn ($forecast) => $forecast->year . '-' . str_pad((string) $forecast->month, 2, '0', STR_PAD_LEFT));
-        $historicalPredictions = $this->historicalPredictions();
+        $historicalPredictions = $this->historicalPredictions()->only($actualRecords->keys()->all());
         $comparisonPeriods = $actualRecords
             ->keys()
             ->merge($forecastRecords->keys())
@@ -194,9 +193,7 @@ class ViewerController extends Controller
             return collect();
         }
 
-        $python = file_exists(base_path('venv314/Scripts/python.exe'))
-            ? base_path('venv314/Scripts/python.exe')
-            : 'python';
+        $python = config('services.ml.python');
 
         $result = Process::path(base_path('Python'))->run([
             $python,

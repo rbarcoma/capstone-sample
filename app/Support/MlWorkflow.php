@@ -5,7 +5,6 @@ namespace App\Support;
 use App\Models\ForecastResult;
 use App\Models\ProcessedRecord;
 use App\Models\Report;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
@@ -63,6 +62,11 @@ class MlWorkflow
 
     public function predictAndGenerate(?int $userId = null, string $source = 'manual', bool $generateReport = true): array
     {
+        $period = ForecastPeriod::next();
+        if (! $period) {
+            throw new RuntimeException('Complete monthly consumption data is required for forecasting.');
+        }
+
         $this->ensureModelAvailable($userId);
 
         $state = $this->modelState();
@@ -86,6 +90,10 @@ class MlWorkflow
 
         if (! $data) {
             throw new RuntimeException('Invalid JSON output from Python prediction script.');
+        }
+
+        if ((int) ($data['year'] ?? 0) !== $period->year || (int) ($data['month'] ?? 0) !== $period->month) {
+            throw new RuntimeException('Prediction period must immediately follow the latest complete actual month.');
         }
 
         $generatedAt = now();
@@ -223,9 +231,7 @@ class MlWorkflow
 
     private function runPython(string $script, string $modelPath, string $metricsPath)
     {
-        $python = file_exists(base_path('venv314/Scripts/python.exe'))
-            ? base_path('venv314/Scripts/python.exe')
-            : 'python';
+        $python = config('services.ml.python');
 
         Storage::makeDirectory(dirname($modelPath));
         Storage::makeDirectory(dirname($metricsPath));

@@ -5,8 +5,6 @@ namespace App\Support;
 use App\Models\ClimateRecord;
 use App\Models\ConsumptionRecord;
 use App\Models\Dataset;
-use App\Models\DssResult;
-use App\Models\ForecastResult;
 use App\Models\ProcessedRecord;
 use App\Models\Report;
 
@@ -14,8 +12,8 @@ class ReportGenerator
 {
     public static function create(?int $userId = null, string $source = 'manual'): Report
     {
-        $forecast = ForecastResult::latest('predicted_at')->first();
-        $dss = DssResult::latest('updated_at')->first();
+        $forecast = ForecastPeriod::current()->latest('predicted_at')->first();
+        $dss = ForecastPeriod::currentDss()->latest('updated_at')->first();
         $dataset = Dataset::with('user:id,name')->latest()->first();
         $latestProcessed = ProcessedRecord::query()
             ->orderByDesc('year')

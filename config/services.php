@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'ml' => [
+        'python' => env('ML_PYTHON_BIN', '/opt/ml-venv/bin/python'),
+    ],
+
 ];

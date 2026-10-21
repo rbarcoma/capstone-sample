@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\ForecastResult;
 use App\Models\ProcessedRecord;
+use App\Support\ForecastPeriod;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Process;
@@ -31,12 +31,12 @@ class AnalyticsController extends Controller
             ->orderBy('month')
             ->get()
             ->keyBy(fn ($record) => $record->year.'-'.str_pad((string) $record->month, 2, '0', STR_PAD_LEFT));
-        $forecastRecords = ForecastResult::query()
+        $forecastRecords = ForecastPeriod::throughNext()
             ->orderBy('year')
             ->orderBy('month')
             ->get()
             ->keyBy(fn ($forecast) => $forecast->year.'-'.str_pad((string) $forecast->month, 2, '0', STR_PAD_LEFT));
-        $historicalPredictions = $this->historicalPredictions();
+        $historicalPredictions = $this->historicalPredictions()->only($actualRecords->keys()->all());
         $comparisonPeriods = $actualRecords
             ->keys()
             ->merge($forecastRecords->keys())
@@ -128,9 +128,7 @@ class AnalyticsController extends Controller
             return collect();
         }
 
-        $python = file_exists(base_path('venv314/Scripts/python.exe'))
-            ? base_path('venv314/Scripts/python.exe')
-            : 'python';
+        $python = config('services.ml.python');
 
         $result = Process::path(base_path('Python'))->run([
             $python,

@@ -3,10 +3,9 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\DssResult;
-use App\Models\ForecastResult;
-use App\Support\AuditLogger;
 use App\Models\Report;
+use App\Support\AuditLogger;
+use App\Support\ForecastPeriod;
 use App\Support\ReportGenerator;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -17,8 +16,8 @@ class ReportController extends Controller
     {
         return Inertia::render('Admin/Reports', [
             'reports' => Report::with('user:id,name')->latest()->get(),
-            'latestForecast' => ForecastResult::latest('predicted_at')->first(),
-            'latestDss' => DssResult::latest('updated_at')->first(),
+            'latestForecast' => ForecastPeriod::current()->latest('predicted_at')->first(),
+            'latestDss' => ForecastPeriod::currentDss()->latest('updated_at')->first(),
         ]);
     }
 

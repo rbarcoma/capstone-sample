@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\ForecastResult;
+use App\Support\ForecastPeriod;
 use App\Support\MlWorkflow;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -14,8 +14,8 @@ class ForecastingController extends Controller
     public function index()
     {
         return Inertia::render('Admin/Forecasting', [
-            'latestForecast' => ForecastResult::with('user:id,name')->latest('predicted_at')->first(),
-            'forecastHistory' => ForecastResult::with('user:id,name')->latest('predicted_at')->take(20)->get(),
+            'latestForecast' => ForecastPeriod::current()->with('user:id,name')->latest('predicted_at')->first(),
+            'forecastHistory' => ForecastPeriod::throughNext()->with('user:id,name')->latest('predicted_at')->take(20)->get(),
         ]);
     }
 

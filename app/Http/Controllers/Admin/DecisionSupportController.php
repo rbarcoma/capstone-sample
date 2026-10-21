@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\DssResult;
-use App\Models\ForecastResult;
 use App\Support\AuditLogger;
 use App\Support\EnergyDss;
+use App\Support\ForecastPeriod;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -15,12 +15,11 @@ class DecisionSupportController extends Controller
     public function index()
     {
         return Inertia::render('Admin/DecisionSupport', [
-            'latestDss' => DssResult::with(['user:id,name', 'forecastResult:id,year,month'])
-                ->whereNotNull('forecast_result_id')
+            'latestDss' => ForecastPeriod::currentDss()->with(['user:id,name', 'forecastResult:id,year,month'])
                 ->latest('updated_at')
                 ->first(),
             'history' => DssResult::with(['user:id,name', 'forecastResult:id,year,month'])
-                ->whereNotNull('forecast_result_id')
+                ->whereIn('forecast_result_id', ForecastPeriod::throughNext()->select('id'))
                 ->latest('updated_at')
                 ->take(20)
                 ->get(),
@@ -29,7 +28,7 @@ class DecisionSupportController extends Controller
 
     public function generate(Request $request)
     {
-        $forecast = ForecastResult::latest('predicted_at')->first();
+        $forecast = ForecastPeriod::current()->latest('predicted_at')->first();
         if (! $forecast) {
             return back()->with('error', 'Run a forecast before generating DSS recommendations.');
         }

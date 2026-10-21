@@ -1,5 +1,4 @@
 import csv
-from datetime import date
 import json
 import math
 import os
@@ -51,9 +50,23 @@ def read_rows(dataset_path):
         reader = csv.DictReader(file)
         rows = []
         for row in reader:
-            parsed = {}
-            for key, value in row.items():
-                parsed[key] = float(value or 0)
+            required = (
+                "year", "month", "consumption_kwh", "temperature", "humidity",
+                "rainfall", "solar_irradiance", "peak_demand_kw",
+            )
+            try:
+                parsed = {key: float(row[key]) for key in required}
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not all(math.isfinite(value) for value in parsed.values()):
+                continue
+            if (not parsed["year"].is_integer() or not 1 <= parsed["year"] <= 9998
+                    or not parsed["month"].is_integer() or not 1 <= parsed["month"] <= 12
+                    or parsed["consumption_kwh"] < 0):
+                continue
+            for key in ("lag_1", "lag_2", "trend", "month_sin", "month_cos"):
+                if row.get(key) not in (None, ""):
+                    parsed[key] = float(row[key])
             rows.append(parsed)
 
 
@@ -88,17 +101,6 @@ def predict_row(model, row):
 
 
     return sum(coefficient * value for coefficient, value in zip(model["coefficients"], values))
-
-
-
-
-def next_period_from_today(today=None):
-    current_date = today or date.today()
-    month = current_date.month
-    year = current_date.year
-
-
-    return next_period(year, month)
 
 
 
@@ -145,16 +147,6 @@ def average_context_for_month(rows, target_month):
 
 
 
-def rows_before_period(rows, target_year, target_month):
-    return [
-        row.copy()
-        for row in rows
-        if (int(row["year"]), int(row["month"])) < (target_year, target_month)
-    ]
-
-
-
-
 def build_forecast_input(rows, target_year, target_month):
     context = average_context_for_month(rows, target_month)
     last_row = rows[-1]
@@ -175,24 +167,6 @@ def build_forecast_input(rows, target_year, target_month):
         "month_sin": math.sin(2 * math.pi * target_month / 12),
         "month_cos": math.cos(2 * math.pi * target_month / 12),
     }
-
-
-
-
-def forecast_until_period(model, rows, target_year, target_month):
-    forecast_rows = rows_before_period(rows, target_year, target_month)
-    if len(forecast_rows) < 2:
-        forecast_rows = [row.copy() for row in rows]
-
-
-    while (int(forecast_rows[-1]["year"]), int(forecast_rows[-1]["month"])) < (target_year, target_month):
-        year, month = next_period(int(forecast_rows[-1]["year"]), int(forecast_rows[-1]["month"]))
-        forecast_input = build_forecast_input(forecast_rows, year, month)
-        prediction = float(predict_row(model, forecast_input))
-        forecast_rows.append({**forecast_input, "consumption_kwh": prediction})
-
-
-    return forecast_rows[-1]
 
 
 
@@ -236,9 +210,11 @@ def main():
             model = pickle.load(model_file)
 
 
-    next_year, next_month = next_period_from_today()
-    forecast_row = forecast_until_period(model, rows, next_year, next_month)
-    prediction = round(float(forecast_row["consumption_kwh"]), 2)
+    # Only actual dataset rows determine the horizon and lag values.
+    last_row = rows[-1]
+    next_year, next_month = next_period(int(last_row["year"]), int(last_row["month"]))
+    forecast_row = build_forecast_input(rows, next_year, next_month)
+    prediction = round(float(predict_row(model, forecast_row)), 2)
     previous = round(float(forecast_row["lag_1"]), 2)
     change_percent = round(((prediction - previous) / previous) * 100, 2) if previous else 0
     metrics = {}

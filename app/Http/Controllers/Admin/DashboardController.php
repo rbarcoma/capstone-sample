@@ -4,10 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Dataset;
-use App\Models\DssResult;
-use App\Models\ForecastResult;
 use App\Models\ProcessedRecord;
 use App\Models\Report;
+use App\Support\ForecastPeriod;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
@@ -16,9 +15,8 @@ class DashboardController extends Controller
     public function __invoke()
     {
         $latestProcessed = ProcessedRecord::query()->orderByDesc('year')->orderByDesc('month')->first();
-        $latestForecast = ForecastResult::latest('predicted_at')->first();
-        $latestDss = DssResult::query()
-            ->whereNotNull('forecast_result_id')
+        $latestForecast = ForecastPeriod::current()->latest('predicted_at')->first();
+        $latestDss = ForecastPeriod::currentDss()
             ->latest('updated_at')
             ->first();
         $trend = ProcessedRecord::query()
@@ -51,10 +49,10 @@ class DashboardController extends Controller
                 'readiness_level' => $latestDss?->readiness_level ?? 'No assessment',
                 'datasets' => Dataset::count(),
                 'processed_records' => ProcessedRecord::count(),
-                'forecasts' => ForecastResult::count(),
+                'forecasts' => ForecastPeriod::throughNext()->count(),
                 'reports' => Report::count(),
             ],
-            'recentForecasts' => ForecastResult::latest('predicted_at')->take(5)->get(),
+            'recentForecasts' => ForecastPeriod::throughNext()->latest('predicted_at')->take(5)->get(),
             'recentReports' => Report::latest()->take(5)->get(),
             'recentDatasets' => Dataset::latest()->take(5)->get(),
             'trend' => $trend,
