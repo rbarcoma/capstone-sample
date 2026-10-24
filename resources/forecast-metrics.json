@@ -1,0 +1,9 @@
+{
+    "version": "metric-semantics-v1",
+    "mae": "MAE is the mean absolute prediction error in kWh over the evaluated observations. Lower is better; no observations means unavailable.",
+    "rmse": "RMSE is the square root of the mean squared prediction error in kWh over the evaluated observations. Lower is better; no observations means unavailable.",
+    "r2_score": "R² = 1 - sum of squared errors / sum of squared deviations of actuals from their evaluation-set mean. It is unavailable with fewer than two observations or zero actual variance. Negative values are valid and indicate greater squared error than that mean reference; the reference is not a deployable forecasting baseline.",
+    "fold_average": "Cross-validation fold averages are unweighted means of defined fold scores only, with contributing fold counts disclosed. They are not pooled or overall scores; unequal fold sizes and undefined R² must not be hidden.",
+    "scope": "Metrics describe their recorded evaluation observations, not the accuracy of an unobserved next-month estimate or the final full-data fit.",
+    "legacy": "Saved values are not recomputed. Legacy artifacts and report snapshots may encode undefined R² as zero or lack evaluation metadata; these definitions do not retroactively validate those values."
+}

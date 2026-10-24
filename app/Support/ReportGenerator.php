@@ -23,16 +23,22 @@ class ReportGenerator
         $processedCount = ProcessedRecord::count();
         $monthlyRecordCount = ConsumptionRecord::count();
         $latestPeriod = $latestProcessed
-            ? $latestProcessed->year . '-' . str_pad((string) $latestProcessed->month, 2, '0', STR_PAD_LEFT)
+            ? $latestProcessed->year.'-'.str_pad((string) $latestProcessed->month, 2, '0', STR_PAD_LEFT)
             : null;
         $forecastPeriod = $forecast
-            ? $forecast->year . '-' . str_pad((string) $forecast->month, 2, '0', STR_PAD_LEFT)
+            ? $forecast->year.'-'.str_pad((string) $forecast->month, 2, '0', STR_PAD_LEFT)
             : null;
-        $averageConsumption = round((float) ProcessedRecord::avg('consumption_kwh'), 2);
-        $r2Score = (float) ($forecast?->r2_score ?? 0);
-        $demandRatio = $averageConsumption > 0 && $forecast
-            ? round(((float) $forecast->predicted_consumption_kwh / $averageConsumption) * 100, 2)
-            : null;
+        $rounded = fn ($value) => ($value = AnalyticsSeries::number($value)) === null ? null : round($value, 2);
+        $averageConsumption = $rounded(ProcessedRecord::avg('consumption_kwh'));
+        $basis = DssEvidence::inspect($forecast, $latestProcessed, $dss);
+        [$recommendations, $actions] = DssEvidence::guidance();
+        // Qualify this new snapshot; never update the saved DSS or old reports.
+        $dssSnapshot = $dss ? array_replace($dss->toArray(), [
+            'demand_status' => DssEvidence::NOT_ASSESSED, 'readiness_level' => DssEvidence::NOT_ASSESSED,
+            'recommendations' => $recommendations, 'priority_actions' => $actions,
+            'basis' => $basis + ['source' => 'report_time_qualification', 'stored_assessment_id' => $dss->id],
+        ]) : null;
+        $r2Score = ForecastMetrics::rounded($forecast?->r2_score);
 
         return Report::create([
             'user_id' => $userId,
@@ -61,28 +67,25 @@ class ReportGenerator
                 'analytics' => [
                     'record_count' => $processedCount,
                     'latest_period' => $latestPeriod,
-                    'latest_consumption_kwh' => round((float) ($latestProcessed?->consumption_kwh ?? 0), 2),
+                    'latest_consumption_kwh' => $rounded($latestProcessed?->consumption_kwh),
                     'average_consumption_kwh' => $averageConsumption,
-                    'highest_consumption_kwh' => round((float) ProcessedRecord::max('consumption_kwh'), 2),
-                    'average_peak_demand_kw' => round((float) ProcessedRecord::avg('peak_demand_kw'), 2),
-                    'average_solar_irradiance' => round((float) ProcessedRecord::avg('solar_irradiance'), 2),
+                    'highest_consumption_kwh' => $rounded(ProcessedRecord::max('consumption_kwh')),
+                    'average_peak_demand_kw' => $rounded(ProcessedRecord::avg('peak_demand_kw')),
+                    'average_solar_irradiance' => $rounded(ProcessedRecord::avg('solar_irradiance')),
                 ],
                 'latest_forecast' => $forecast,
-                'latest_dss' => $dss,
+                'latest_dss' => $dssSnapshot,
                 'forecast_accuracy' => [
-                    'mae' => round((float) ($forecast?->mae ?? 0), 4),
-                    'rmse' => round((float) ($forecast?->rmse ?? 0), 4),
-                    'r2_score' => round($r2Score, 4),
-                    'interpretation' => $r2Score >= 0.80
-                        ? 'The model explains a strong portion of the historical consumption pattern and is suitable for decision-support estimates.'
-                        : ($r2Score >= 0.50
-                            ? 'The model explains a moderate portion of the pattern. Results should be reviewed with operational context.'
-                            : 'The model has limited explanatory strength. More data or improved features may be needed.'),
+                    'mae' => ForecastMetrics::rounded($forecast?->mae),
+                    'rmse' => ForecastMetrics::rounded($forecast?->rmse),
+                    'r2_score' => $r2Score,
+                    'metric_definitions' => ForecastMetrics::definitions(),
+                    'interpretation' => DssEvidence::interpretation($basis),
                 ],
                 'prediction_explanation' => [
-                    'model' => $forecast?->model_type ?? 'Linear Regression',
+                    'model' => $forecast?->model_type ?? 'Ridge (penalty 0.1)',
                     'forecast_period' => $forecastPeriod,
-                    'description' => 'The system uses Linear Regression. Daily uploaded records are aggregated into monthly records, preprocessing creates lag, trend, and seasonal features, and the trained coefficients are applied to the next-month feature values. The sum of the intercept and weighted feature values becomes the predicted monthly consumption.',
+                    'description' => 'The system uses Ridge (penalty 0.1). Daily uploaded records are aggregated into monthly records, preprocessing creates lag, trend, and seasonal features, and the trained coefficients are applied to the next-month feature values. The sum of the intercept and weighted feature values becomes the predicted monthly consumption.',
                     'features' => [
                         'year',
                         'month',
@@ -99,10 +102,10 @@ class ReportGenerator
                     ],
                 ],
                 'dss_reasoning' => [
-                    'demand_reason' => $demandRatio
-                        ? 'The predicted consumption is ' . $demandRatio . '% of the historical average consumption, which supports the ' . ($dss?->demand_status ?? 'No demand status') . ' classification.'
-                        : 'Demand reasoning is unavailable because forecast or average consumption data is incomplete.',
-                    'readiness_reason' => 'Readiness is based on solar irradiance, peak demand, and predicted consumption. The current DSS result classified readiness as ' . ($dss?->readiness_level ?? 'No readiness assessment') . '.',
+                    'rule_version' => DssEvidence::RULE_VERSION,
+                    'basis' => $basis,
+                    'demand_reason' => DssEvidence::demandReason($basis),
+                    'readiness_reason' => DssEvidence::readinessReason($basis),
                 ],
                 'statuses' => [
                     'data_status' => $processedCount > 0 ? 'Preprocessed' : 'Pending',
@@ -110,7 +113,7 @@ class ReportGenerator
                     'dss_status' => $dss ? 'Generated' : 'Pending',
                     'model_used' => $forecast?->model_type ?? 'No model',
                 ],
-                'report_basis' => 'This report is based on uploaded electricity and climate records, monthly aggregated preprocessing results, machine learning forecasting output, and decision support classification.',
+                'report_basis' => 'This report records available dataset, forecast and saved-assessment evidence at generation time. Demand and readiness are not assessed because the verified unit/threshold and feasibility basis is insufficient; saved assessments are qualified in this new snapshot only.',
             ],
         ]);
     }

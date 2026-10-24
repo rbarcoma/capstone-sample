@@ -15,10 +15,10 @@ class DecisionSupportController extends Controller
     public function index()
     {
         return Inertia::render('Admin/DecisionSupport', [
-            'latestDss' => ForecastPeriod::currentDss()->with(['user:id,name', 'forecastResult:id,year,month'])
+            'latestDss' => ForecastPeriod::currentDss()->with(['user:id,name', 'forecastResult:id,year,month,predicted_at,updated_at'])
                 ->latest('updated_at')
                 ->first(),
-            'history' => DssResult::with(['user:id,name', 'forecastResult:id,year,month'])
+            'history' => DssResult::with(['user:id,name', 'forecastResult:id,year,month,predicted_at,updated_at'])
                 ->whereIn('forecast_result_id', ForecastPeriod::throughNext()->select('id'))
                 ->latest('updated_at')
                 ->take(20)

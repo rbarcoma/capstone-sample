@@ -1,7 +1,9 @@
 import { StatCard } from '@/components/dss/stat-card';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { Dataset, ForecastResult, Report } from '@/types';
+import { displayValue } from '@/lib/display-value';
+import { legacyDssNotice } from '@/lib/dss-evidence';
+import type { Dataset, DssResult, ForecastResult, Report } from '@/types';
 import {
     Activity,
     ArrowDownRight,
@@ -31,16 +33,18 @@ import {
 } from 'recharts';
 
 type AdminStats = {
-    latest_average_consumption?: number;
-    latest_predicted_consumption?: number;
+    latest_average_consumption?: number | null;
+    latest_predicted_consumption?: number | null;
     latest_period?: string;
     forecast_period?: string;
-    forecast_change_percent?: number;
-    previous_consumption?: number;
-    peak_demand_kw?: number;
-    solar_irradiance?: number;
+    forecast_issuance?: string;
+    forecast_change_percent?: number | null;
+    previous_consumption?: number | null;
+    peak_demand_kw?: number | null;
+    solar_irradiance?: number | null;
     demand_status?: string;
     readiness_level?: string;
+    dss_evidence?: Pick<DssResult, 'basis'> | null;
     datasets?: number;
     processed_records?: number;
     forecasts?: number;
@@ -60,19 +64,24 @@ type YearlyPoint = {
     consumption_kwh: number;
 };
 
-function formatNumber(value?: number | string) {
-    return Number(value ?? 0).toLocaleString(undefined, {
+function formatNumber(value?: number | string | null, suffix = '') {
+    if (displayValue(value) === 'Unavailable') {
+        return 'Unavailable';
+    }
+
+    return `${Number(value).toLocaleString(undefined, {
         maximumFractionDigits: 2,
-    });
+    })}${suffix}`;
 }
 
-function formatTooltipNumber(value: unknown) {
+function formatTooltipNumber(value: unknown, suffix = '') {
     const numberValue = Array.isArray(value) ? value[0] : value;
 
     return formatNumber(
         typeof numberValue === 'number' || typeof numberValue === 'string'
             ? numberValue
-            : 0,
+            : null,
+        suffix,
     );
 }
 
@@ -161,7 +170,7 @@ function ConsumptionTrendChart({ data }: { data: TrendPoint[] }) {
                     />
                     <Tooltip
                         formatter={(value) => [
-                            `${formatTooltipNumber(value)} kWh`,
+                            formatTooltipNumber(value, ' kWh'),
                             'Consumption',
                         ]}
                         labelFormatter={(label) => `Period ${label}`}
@@ -233,7 +242,7 @@ function YearlyAverageChart({ data }: { data: YearlyPoint[] }) {
                     />
                     <Tooltip
                         formatter={(value) => [
-                            `${formatTooltipNumber(value)} kWh`,
+                            formatTooltipNumber(value, ' kWh'),
                             'Average',
                         ]}
                         contentStyle={tooltipStyle}
@@ -313,6 +322,7 @@ export default function Dashboard({
     const forecastChange = Number(stats.forecast_change_percent ?? 0);
     const changeIsIncrease = forecastChange >= 0;
     const ChangeIcon = changeIsIncrease ? ArrowUpRight : ArrowDownRight;
+    const changeDisplay = formatNumber(stats.forecast_change_percent, '%');
 
     return (
         <div className="space-y-6 p-6">
@@ -322,6 +332,7 @@ export default function Dashboard({
                         Renewable Energy DSS Dashboard
                     </h1>
                     <p className="text-sm text-muted-foreground">
+                        {legacyDssNotice(stats.dss_evidence)}
                         Quezon City electricity analytics, forecasting, and
                         transition readiness.
                     </p>
@@ -348,25 +359,29 @@ export default function Dashboard({
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <StatCard
                     title="Latest Consumption"
-                    value={`${formatNumber(stats.latest_average_consumption)} kWh`}
+                    value={formatNumber(stats.latest_average_consumption, ' kWh')}
                     helper={stats.latest_period}
                     icon={Activity}
                 />
                 <StatCard
                     title="Predicted Consumption"
-                    value={`${formatNumber(stats.latest_predicted_consumption)} kWh`}
-                    helper={stats.forecast_period}
+                    value={formatNumber(stats.latest_predicted_consumption, ' kWh')}
+                    helper={stats.forecast_issuance ?? stats.forecast_period}
                     icon={Brain}
                 />
                 <StatCard
                     title="Forecast Change"
-                    value={`${changeIsIncrease ? '+' : ''}${formatNumber(forecastChange)}%`}
+                    value={
+                        changeDisplay === 'Unavailable'
+                            ? changeDisplay
+                            : `${changeIsIncrease ? '+' : ''}${changeDisplay}`
+                    }
                     helper="vs previous month"
                     icon={ChangeIcon}
                 />
                 <StatCard
                     title="Peak Demand"
-                    value={`${formatNumber(stats.peak_demand_kw)} kW`}
+                    value={formatNumber(stats.peak_demand_kw, ' kW')}
                     helper="latest record"
                     icon={BarChart3}
                 />
@@ -380,7 +395,7 @@ export default function Dashboard({
                 />
                 <StatCard
                     title="Processed Records"
-                    value={formatNumber(stats.processed_records)}
+                    value={formatNumber(stats.processed_records ?? 0)}
                     icon={Layers}
                 />
                 <StatCard
@@ -427,6 +442,9 @@ export default function Dashboard({
                             <p className="mt-2 text-2xl font-semibold">
                                 {stats.forecast_period ?? 'No forecast'}
                             </p>
+                            <p className="text-xs text-muted-foreground">
+                                {stats.forecast_issuance}
+                            </p>
                         </div>
                         <div className="rounded-md border p-4">
                             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -443,7 +461,7 @@ export default function Dashboard({
                                 Previous Consumption
                             </div>
                             <p className="mt-2 text-2xl font-semibold">
-                                {formatNumber(stats.previous_consumption)} kWh
+                                {formatNumber(stats.previous_consumption, ' kWh')}
                             </p>
                         </div>
                     </CardContent>
@@ -488,14 +506,14 @@ export default function Dashboard({
                                             )}
                                         </p>
                                         <p className="text-xs text-muted-foreground">
-                                            {item.model_type ?? 'Forecast'}
+                                            {item.model_type ?? 'Forecast'} · {item.issuance_label}
                                         </p>
                                     </div>
                                     <p className="text-sm font-semibold">
                                         {formatNumber(
                                             item.predicted_consumption_kwh,
-                                        )}{' '}
-                                        kWh
+                                            ' kWh',
+                                        )}
                                     </p>
                                 </div>
                             ))

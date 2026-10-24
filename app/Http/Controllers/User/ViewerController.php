@@ -6,10 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\DssResult;
 use App\Models\ProcessedRecord;
 use App\Models\Report;
+use App\Support\AnalyticsSeries;
 use App\Support\ForecastPeriod;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Process;
-use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 class ViewerController extends Controller
@@ -36,10 +35,10 @@ class ViewerController extends Controller
     public function decisionSupport()
     {
         return Inertia::render('User/DecisionSupportResults', [
-            'latestDss' => ForecastPeriod::currentDss()->with(['user:id,name', 'forecastResult:id,year,month'])
+            'latestDss' => ForecastPeriod::currentDss()->with(['user:id,name', 'forecastResult:id,year,month,predicted_at,updated_at'])
                 ->latest('updated_at')
                 ->first(),
-            'history' => DssResult::with(['user:id,name', 'forecastResult:id,year,month'])
+            'history' => DssResult::with(['user:id,name', 'forecastResult:id,year,month,predicted_at,updated_at'])
                 ->whereIn('forecast_result_id', ForecastPeriod::throughNext()->select('id'))
                 ->latest('updated_at')
                 ->take(20)
@@ -73,22 +72,26 @@ class ViewerController extends Controller
             ])
             ->values();
 
+        $rounded = fn ($value) => ($value = AnalyticsSeries::number($value)) === null ? null : round($value, 2);
+
         return [
             'stats' => [
-                'latest_average_consumption' => round((float) ($latestProcessed?->consumption_kwh ?? 0), 2),
-                'latest_predicted_consumption' => round((float) ($latestForecast?->predicted_consumption_kwh ?? 0), 2),
+                'latest_average_consumption' => $rounded($latestProcessed?->consumption_kwh),
+                'latest_predicted_consumption' => $rounded($latestForecast?->predicted_consumption_kwh),
                 'latest_period' => $latestProcessed
-                    ? $latestProcessed->year . '-' . str_pad((string) $latestProcessed->month, 2, '0', STR_PAD_LEFT)
+                    ? $latestProcessed->year.'-'.str_pad((string) $latestProcessed->month, 2, '0', STR_PAD_LEFT)
                     : 'No data',
                 'forecast_period' => $latestForecast
-                    ? $latestForecast->year . '-' . str_pad((string) $latestForecast->month, 2, '0', STR_PAD_LEFT)
+                    ? $latestForecast->year.'-'.str_pad((string) $latestForecast->month, 2, '0', STR_PAD_LEFT)
                     : 'No forecast',
-                'forecast_change_percent' => round((float) ($latestForecast?->change_percent ?? 0), 2),
-                'previous_consumption' => round((float) ($latestForecast?->previous_consumption_kwh ?? 0), 2),
-                'peak_demand_kw' => round((float) ($latestProcessed?->peak_demand_kw ?? 0), 2),
-                'solar_irradiance' => round((float) ($latestProcessed?->solar_irradiance ?? 0), 2),
+                'forecast_issuance' => $latestForecast?->issuance_label,
+                'forecast_change_percent' => $rounded($latestForecast?->change_percent),
+                'previous_consumption' => $rounded($latestForecast?->previous_consumption_kwh),
+                'peak_demand_kw' => $rounded($latestProcessed?->peak_demand_kw),
+                'solar_irradiance' => $rounded($latestProcessed?->solar_irradiance),
                 'demand_status' => $latestDss?->demand_status ?? 'No DSS result',
                 'readiness_level' => $latestDss?->readiness_level ?? 'No assessment',
+                'dss_evidence' => $latestDss?->only('basis'),
             ],
             'recommendations' => $latestDss?->recommendations ?? [],
             'priorityActions' => $latestDss?->priority_actions ?? [],
@@ -103,13 +106,13 @@ class ViewerController extends Controller
             ->orderBy('year')
             ->orderBy('month')
             ->get()
-            ->keyBy(fn ($record) => $record->year . '-' . str_pad((string) $record->month, 2, '0', STR_PAD_LEFT));
+            ->keyBy(fn ($record) => $record->year.'-'.str_pad((string) $record->month, 2, '0', STR_PAD_LEFT));
         $forecastRecords = ForecastPeriod::throughNext()
             ->orderBy('year')
             ->orderBy('month')
             ->get()
-            ->keyBy(fn ($forecast) => $forecast->year . '-' . str_pad((string) $forecast->month, 2, '0', STR_PAD_LEFT));
-        $historicalPredictions = $this->historicalPredictions()->only($actualRecords->keys()->all());
+            ->keyBy(fn ($forecast) => $forecast->year.'-'.str_pad((string) $forecast->month, 2, '0', STR_PAD_LEFT));
+        $historicalPredictions = AnalyticsSeries::historicalFits()->only($actualRecords->keys()->all());
         $comparisonPeriods = $actualRecords
             ->keys()
             ->merge($forecastRecords->keys())
@@ -117,9 +120,6 @@ class ViewerController extends Controller
             ->unique()
             ->sort()
             ->values();
-        $highestConsumptionRecord = ProcessedRecord::query()
-            ->orderByDesc('consumption_kwh')
-            ->first();
 
         return [
             'monthlyTrend' => ProcessedRecord::query()
@@ -127,30 +127,8 @@ class ViewerController extends Controller
                 ->orderBy('year')
                 ->orderBy('month')
                 ->get(),
-            'actualPredictedTrend' => $comparisonPeriods->map(function ($period) use ($actualRecords, $forecastRecords, $historicalPredictions) {
-                $actual = $actualRecords->get($period);
-                $forecast = $forecastRecords->get($period);
-                $historicalPrediction = $historicalPredictions->get($period);
-                $actualValue = $actual ? (float) $actual->consumption_kwh : null;
-                $predictedValue = $forecast
-                    ? (float) $forecast->predicted_consumption_kwh
-                    : ($historicalPrediction ? (float) $historicalPrediction['predicted'] : null);
-                $accuracy = null;
-
-                if ($actualValue !== null && $actualValue > 0 && $predictedValue !== null) {
-                    $accuracy = max(0, 100 - (abs($actualValue - $predictedValue) / $actualValue * 100));
-                }
-
-                return [
-                    'period' => $period,
-                    'label' => $period,
-                    'year' => (int) substr($period, 0, 4),
-                    'month' => (int) substr($period, 5, 2),
-                    'actual' => $actualValue,
-                    'predicted' => $predictedValue,
-                    'accuracy' => $accuracy !== null ? round($accuracy, 2) : null,
-                ];
-            })->values(),
+            'actualPredictedTrend' => AnalyticsSeries::rows($actualRecords, $forecastRecords, $historicalPredictions),
+            'aggregate_scope' => 'all_available_actuals',
             'filterOptions' => [
                 'years' => $comparisonPeriods
                     ->map(fn ($period) => (int) substr($period, 0, 4))
@@ -169,49 +147,7 @@ class ViewerController extends Controller
                 ->groupBy('month')
                 ->orderBy('month')
                 ->get(),
-            'summary' => [
-                'average_consumption' => round((float) ProcessedRecord::avg('consumption_kwh'), 2),
-                'highest_consumption' => round((float) ($highestConsumptionRecord?->consumption_kwh ?? 0), 2),
-                'highest_consumption_year' => $highestConsumptionRecord?->year,
-                'highest_consumption_month' => $highestConsumptionRecord?->month,
-                'average_peak_demand' => round((float) ProcessedRecord::avg('peak_demand_kw'), 2),
-                'average_solar_irradiance' => round((float) ProcessedRecord::avg('solar_irradiance'), 2),
-            ],
+            'summary' => AnalyticsSeries::summary(),
         ];
-    }
-
-    private function historicalPredictions()
-    {
-        if (! Storage::exists('ml/processed_dataset.csv') || ! Storage::exists('ml/model_state.json')) {
-            return collect();
-        }
-
-        $state = json_decode(Storage::get('ml/model_state.json'), true) ?: [];
-        $modelPath = $state['model_path'] ?? null;
-
-        if (! $modelPath || ! Storage::exists($modelPath)) {
-            return collect();
-        }
-
-        $python = config('services.ml.python');
-
-        $result = Process::path(base_path('Python'))->run([
-            $python,
-            'predict_history.py',
-            Storage::path('ml/processed_dataset.csv'),
-            Storage::path($modelPath),
-        ]);
-
-        if ($result->failed()) {
-            return collect();
-        }
-
-        $predictions = json_decode(trim($result->output()), true);
-
-        if (! is_array($predictions)) {
-            return collect();
-        }
-
-        return collect($predictions)->keyBy('period');
     }
 }

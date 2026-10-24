@@ -1,9 +1,9 @@
-import csv
 import json
-import math
 import pickle
 import sys
 from pathlib import Path
+
+from monthly_features import FEATURE_VERSION, read_rows, supervised_rows
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -17,34 +17,6 @@ def default_dataset_path():
 
 def default_model_path():
     return STORAGE_ML_DIR / "qc_energy_model.pkl"
-
-
-def read_rows(dataset_path):
-    with open(dataset_path, newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        rows = []
-        for row in reader:
-            parsed = {}
-            for key, value in row.items():
-                parsed[key] = float(value or 0)
-            rows.append(parsed)
-
-    return add_derived_features(sorted(rows, key=lambda item: (item["year"], item["month"])))
-
-
-def add_derived_features(rows):
-    for index, row in enumerate(rows):
-        month = int(row["month"])
-        previous_row = rows[index - 1] if index > 0 else row
-        second_previous_row = rows[index - 2] if index > 1 else row
-
-        row.setdefault("lag_1", previous_row["consumption_kwh"])
-        row.setdefault("lag_2", second_previous_row["consumption_kwh"])
-        row.setdefault("trend", float(index + 1))
-        row.setdefault("month_sin", math.sin(2 * math.pi * month / 12))
-        row.setdefault("month_cos", math.cos(2 * math.pi * month / 12))
-
-    return rows
 
 
 def predict_row(model, row):
@@ -64,14 +36,12 @@ def main():
     with open(model_path, "rb") as model_file:
         model = pickle.load(model_file)
 
-    predictions = []
-    for row in rows:
-        actual = float(row["consumption_kwh"])
-        predicted = round(float(predict_row(model, row)), 2)
-        accuracy = None
+    if model.get("feature_version") != FEATURE_VERSION:
+        raise ValueError("Model uses an outdated feature definition; retrain before predicting history.")
 
-        if actual > 0:
-            accuracy = round(max(0, 100 - (abs(actual - predicted) / actual * 100)), 2)
+    predictions = []
+    for row in supervised_rows(rows):
+        predicted = round(float(predict_row(model, row)), 2)
 
         year = int(row["year"])
         month = int(row["month"])
@@ -79,8 +49,8 @@ def main():
             "period": f"{year}-{month:02d}",
             "year": year,
             "month": month,
-            "predicted": predicted,
-            "accuracy": accuracy,
+            "fitted": predicted,
+            "kind": "in_sample_fit",
         })
 
     print(json.dumps(predictions))

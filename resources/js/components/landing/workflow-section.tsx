@@ -32,7 +32,7 @@ const workflowSteps = [
         icon: BrainCircuit,
         title: 'Next-month forecasting',
         description:
-            'Standardized Linear Regression uses lag, trend, seasonality, and contextual features to estimate the next month.',
+            'Standardized Ridge (penalty 0.1) uses lag, trend, seasonality, and contextual features to estimate the next month.',
     },
     {
         icon: ListChecks,

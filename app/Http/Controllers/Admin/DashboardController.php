@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Dataset;
 use App\Models\ProcessedRecord;
 use App\Models\Report;
+use App\Support\AnalyticsSeries;
 use App\Support\ForecastPeriod;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -31,22 +32,26 @@ class DashboardController extends Controller
             ])
             ->values();
 
+        $rounded = fn ($value) => ($value = AnalyticsSeries::number($value)) === null ? null : round($value, 2);
+
         return Inertia::render('Admin/Dashboard', [
             'stats' => [
-                'latest_average_consumption' => round((float) ($latestProcessed?->consumption_kwh ?? 0), 2),
-                'latest_predicted_consumption' => round((float) ($latestForecast?->predicted_consumption_kwh ?? 0), 2),
+                'latest_average_consumption' => $rounded($latestProcessed?->consumption_kwh),
+                'latest_predicted_consumption' => $rounded($latestForecast?->predicted_consumption_kwh),
                 'latest_period' => $latestProcessed
-                    ? $latestProcessed->year . '-' . str_pad((string) $latestProcessed->month, 2, '0', STR_PAD_LEFT)
+                    ? $latestProcessed->year.'-'.str_pad((string) $latestProcessed->month, 2, '0', STR_PAD_LEFT)
                     : 'No data',
                 'forecast_period' => $latestForecast
-                    ? $latestForecast->year . '-' . str_pad((string) $latestForecast->month, 2, '0', STR_PAD_LEFT)
+                    ? $latestForecast->year.'-'.str_pad((string) $latestForecast->month, 2, '0', STR_PAD_LEFT)
                     : 'No forecast',
-                'forecast_change_percent' => round((float) ($latestForecast?->change_percent ?? 0), 2),
-                'previous_consumption' => round((float) ($latestForecast?->previous_consumption_kwh ?? 0), 2),
-                'peak_demand_kw' => round((float) ($latestProcessed?->peak_demand_kw ?? 0), 2),
-                'solar_irradiance' => round((float) ($latestProcessed?->solar_irradiance ?? 0), 2),
+                'forecast_issuance' => $latestForecast?->issuance_label,
+                'forecast_change_percent' => $rounded($latestForecast?->change_percent),
+                'previous_consumption' => $rounded($latestForecast?->previous_consumption_kwh),
+                'peak_demand_kw' => $rounded($latestProcessed?->peak_demand_kw),
+                'solar_irradiance' => $rounded($latestProcessed?->solar_irradiance),
                 'demand_status' => $latestDss?->demand_status ?? 'No DSS result',
                 'readiness_level' => $latestDss?->readiness_level ?? 'No assessment',
+                'dss_evidence' => $latestDss?->only('basis'),
                 'datasets' => Dataset::count(),
                 'processed_records' => ProcessedRecord::count(),
                 'forecasts' => ForecastPeriod::throughNext()->count(),

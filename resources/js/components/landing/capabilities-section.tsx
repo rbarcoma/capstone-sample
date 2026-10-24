@@ -30,7 +30,7 @@ const capabilities = [
         icon: BrainCircuit,
         title: 'Machine Learning Forecasting',
         description:
-            'Estimate next-calendar-month electricity consumption using the platform’s active Linear Regression workflow.',
+            'Estimate next-calendar-month electricity consumption using the platform’s active Ridge (penalty 0.1) workflow.',
     },
     {
         icon: ListChecks,

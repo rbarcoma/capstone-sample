@@ -83,6 +83,7 @@ test('daily uploads only advance after the next month has every actual day', fun
 
     $this->post(route('admin.data-management.store'), [
         'dataset' => UploadedFile::fake()->createWithContent('daily.csv', forecastCsv($periods)),
+        'replace_existing' => true,
     ])->assertSessionHasNoErrors();
     expect(ForecastPeriod::next()->format('Y-m'))->toBe('2026-11');
 });
@@ -119,7 +120,8 @@ test('monthly actual uploads are accepted and leap year daily data requires ever
         'dataset' => UploadedFile::fake()->createWithContent('partial-leap.csv', forecastCsv([[2028, 2]], 28)),
     ])->assertSessionHasErrors('dataset');
     $this->post(route('admin.data-management.store'), [
-        'dataset' => UploadedFile::fake()->createWithContent('complete-leap.csv', forecastCsv([[2028, 2]])),
+        'dataset' => UploadedFile::fake()->createWithContent('complete-leap.csv', forecastCsv([[2027, 12], [2028, 1], [2028, 2]])),
+        'replace_existing' => true,
     ])->assertSessionHasNoErrors();
     expect(ForecastPeriod::next()->format('Y-m'))->toBe('2028-03');
 });
@@ -167,9 +169,18 @@ test('the workflow rejects a prediction for any period beyond the dataset horizo
     foreach (range(4, 9) as $month) {
         forecastActual(2026, $month);
     }
-    Storage::put('ml/model.pkl', 'test-model');
-    Storage::put('ml/model_state.json', json_encode(['model_path' => 'ml/model.pkl', 'metrics_path' => 'ml/metrics.json']));
-    Process::fake([Process::result(output: json_encode(['year' => 2026, 'month' => 12, 'predicted_consumption_kwh' => 1000]))]);
+    Process::fake(function ($process) {
+        if ($process->command[1] === 'train_model.py') {
+            file_put_contents($process->command[3], 'test-model');
+            file_put_contents($process->command[4], json_encode([
+                'model_type' => 'Linear Regression', 'mae' => 1, 'rmse' => 1, 'r2_score' => -1,
+            ]));
+
+            return Process::result();
+        }
+
+        return Process::result(output: json_encode(['year' => 2026, 'month' => 12, 'predicted_consumption_kwh' => 1000]));
+    });
 
     expect(fn () => app(MlWorkflow::class)->predictAndGenerate())
         ->toThrow(RuntimeException::class, 'Prediction period must immediately follow');
@@ -179,7 +190,7 @@ test('the workflow rejects a prediction for any period beyond the dataset horizo
 test('real Python workflow repeats October until October actual data exists', function () {
     config(['services.ml.python' => 'python3']);
     $this->travelTo(Carbon::parse('2028-06-01'));
-    foreach (range(4, 9) as $month) {
+    foreach (range(2, 9) as $month) {
         forecastActual(2026, $month);
     }
     $workflow = app(MlWorkflow::class);

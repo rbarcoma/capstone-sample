@@ -112,7 +112,7 @@ export function AboutSection() {
                                 DSS Energy brings those tasks into one academic
                                 platform for the Quezon City study context. It
                                 summarizes monthly electricity patterns, uses
-                                Linear Regression to estimate the next calendar
+                                Ridge (penalty 0.1) to estimate the next calendar
                                 month, and presents separate rule-based planning
                                 recommendations.
                             </p>

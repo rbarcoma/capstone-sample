@@ -50,7 +50,7 @@ export default function Welcome({
                 <meta
                     head-key="og-description"
                     property="og:description"
-                    content="Explore consumption analytics, Linear Regression next-month forecasting, and transparent rule-based decision support in an academic research platform."
+                    content="Explore consumption analytics, Ridge (penalty 0.1) next-month forecasting, and transparent rule-based decision support in an academic research platform."
                 />
                 <meta head-key="og-type" property="og:type" content="website" />
                 <meta

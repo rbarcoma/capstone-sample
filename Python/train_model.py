@@ -1,4 +1,3 @@
-import csv
 import json
 import math
 import pickle
@@ -6,20 +5,7 @@ import sys
 from pathlib import Path
 
 
-FEATURES = [
-    "year",
-    "month",
-    "temperature",
-    "humidity",
-    "rainfall",
-    "solar_irradiance",
-    "peak_demand_kw",
-    "lag_1",
-    "lag_2",
-    "trend",
-    "month_sin",
-    "month_cos",
-]
+from monthly_features import FEATURE_VERSION, FEATURES, read_rows, supervised_rows
 
 CROSS_VALIDATION_FOLDS = 5
 
@@ -63,41 +49,6 @@ def default_metrics_path():
 
 def log(message):
     print(message, flush=True)
-
-
-
-
-def read_rows(dataset_path):
-    with open(dataset_path, newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        rows = []
-        for row in reader:
-            parsed = {}
-            for key, value in row.items():
-                parsed[key] = float(value or 0)
-            rows.append(parsed)
-
-
-    return add_derived_features(sorted(rows, key=lambda item: (item["year"], item["month"])))
-
-
-
-
-def add_derived_features(rows):
-    for index, row in enumerate(rows):
-        month = int(row["month"])
-        previous_row = rows[index - 1] if index > 0 else row
-        second_previous_row = rows[index - 2] if index > 1 else row
-
-
-        row.setdefault("lag_1", previous_row["consumption_kwh"])
-        row.setdefault("lag_2", second_previous_row["consumption_kwh"])
-        row.setdefault("trend", float(index + 1))
-        row.setdefault("month_sin", math.sin(2 * math.pi * month / 12))
-        row.setdefault("month_cos", math.cos(2 * math.pi * month / 12))
-
-
-    return rows
 
 
 
@@ -202,7 +153,8 @@ def train_model(train_rows):
 
 
     return {
-        "model_type": "Linear Regression",
+        "feature_version": FEATURE_VERSION,
+        "model_type": "Ridge (penalty 0.1)",
         "features": FEATURES,
         "means": means,
         "stds": stds,
@@ -223,29 +175,46 @@ def predict_row(model, row):
 
 
 
-def evaluate(model, rows):
-    actual = [row["consumption_kwh"] for row in rows]
-    predicted = [predict_row(model, row) for row in rows]
-    errors = [target - prediction for target, prediction in zip(actual, predicted)]
-    mae = sum(abs(error) for error in errors) / len(errors)
-    rmse = math.sqrt(sum(error ** 2 for error in errors) / len(errors))
-    mean_actual = sum(actual) / len(actual)
-    total_variance = sum((target - mean_actual) ** 2 for target in actual)
-    residual_variance = sum(error ** 2 for error in errors)
-    r2_score = 1 - (residual_variance / total_variance) if total_variance else 0
-
-
+def regression_metrics(actual, predicted):
+    """Score exactly the supplied observations, retaining negative/undefined R²."""
+    if len(actual) != len(predicted):
+        raise ValueError("Actual and prediction counts must match.")
+    if not all(math.isfinite(value) for value in (*actual, *predicted)):
+        raise ValueError("Evaluation values must be finite.")
+    count = len(actual)
+    if not count:
+        return {"count": 0, "mae": None, "rmse": None, "r2_score": None}
+    errors = [target - estimate for target, estimate in zip(actual, predicted)]
+    squared_error = math.fsum(error ** 2 for error in errors)
+    mean = math.fsum(actual) / count
+    variance = math.fsum((target - mean) ** 2 for target in actual)
+    r2 = 1 - squared_error / variance if count >= 2 and variance > 0 else None
     return {
-        "mae": round(mae, 4),
-        "rmse": round(rmse, 4),
-        "r2_score": round(r2_score, 4),
-        "model_type": model["model_type"],
+        "count": count,
+        "mae": round(math.fsum(abs(error) for error in errors) / count, 4),
+        "rmse": round(math.sqrt(squared_error / count), 4),
+        "r2_score": round(r2, 4) if r2 is not None else None,
     }
 
 
+
+def evaluate(model, rows):
+    metrics = regression_metrics([row["consumption_kwh"] for row in rows],
+                                 [predict_row(model, row) for row in rows])
+    return {key: metrics[key] for key in ("mae", "rmse", "r2_score")} | {"model_type": model["model_type"]}
+
+
 def average_metric(fold_metrics, key):
-    values = [metrics[key] for metrics in fold_metrics]
-    return round(sum(values) / len(values), 4)
+    values = [metrics[key] for metrics in fold_metrics if metrics[key] is not None]
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def metric_definitions():
+    return json.loads((PROJECT_ROOT / "resources" / "forecast-metrics.json").read_text(encoding="utf-8"))
+
+
+def metric_label(value):
+    return "Unavailable" if value is None else str(value)
 
 
 def cross_validate(rows, fold_count=CROSS_VALIDATION_FOLDS):
@@ -277,6 +246,10 @@ def cross_validate(rows, fold_count=CROSS_VALIDATION_FOLDS):
 
     return {
         "folds": len(fold_metrics),
+        "label": "Cross-validation fold averages (not pooled)",
+        "aggregation": "unweighted_mean_of_defined_fold_scores",
+        "defined_folds": {key: sum(fold[key] is not None for fold in fold_metrics)
+                          for key in ("mae", "rmse", "r2_score")},
         "average_mae": average_metric(fold_metrics, "mae"),
         "average_rmse": average_metric(fold_metrics, "rmse"),
         "average_r2_score": average_metric(fold_metrics, "r2_score"),
@@ -305,9 +278,10 @@ def main():
     log("")
 
 
-    rows = read_rows(dataset_path)
+    actuals = read_rows(dataset_path)
+    rows = supervised_rows(actuals)
     if len(rows) < 6:
-        raise ValueError("At least 6 processed rows are required to train the model.")
+        raise ValueError("At least 6 eligible monthly rows with both preceding calendar actuals are required to train the model.")
 
 
     log(f"Loaded {len(rows)} rows from {period_label(rows[0])} to {period_label(rows[-1])}.")
@@ -326,13 +300,14 @@ def main():
             f"Fold {fold['fold']}: "
             f"{fold['training_rows']} training rows, "
             f"{fold['validation_rows']} validation rows, "
-            f"MAE={fold['mae']}, RMSE={fold['rmse']}, R2={fold['r2_score']}"
+            f"MAE={metric_label(fold['mae'])}, RMSE={metric_label(fold['rmse'])}, R2={metric_label(fold['r2_score'])}"
         )
     log(
-        "Cross-validation averages: "
-        f"MAE={cross_validation['average_mae']}, "
-        f"RMSE={cross_validation['average_rmse']}, "
-        f"R2={cross_validation['average_r2_score']}"
+        "Cross-validation fold averages (not pooled): "
+        f"MAE={metric_label(cross_validation['average_mae'])}, "
+        f"RMSE={metric_label(cross_validation['average_rmse'])}, "
+        f"R2={metric_label(cross_validation['average_r2_score'])} "
+        f"({cross_validation['defined_folds']['r2_score']}/{cross_validation['folds']} defined R2 folds)"
     )
     log("")
 
@@ -340,16 +315,22 @@ def main():
     validation_model = train_model(train_rows)
     metrics = evaluate(validation_model, test_rows)
     log("Holdout test evaluation:")
-    log(f"MAE: {metrics['mae']}")
-    log(f"RMSE: {metrics['rmse']}")
-    log(f"R2 score: {metrics['r2_score']}")
+    log(f"MAE: {metric_label(metrics['mae'])}")
+    log(f"RMSE: {metric_label(metrics['rmse'])}")
+    log(f"R2 score: {metric_label(metrics['r2_score'])}")
     log("")
 
 
     metrics["cross_validation"] = cross_validation
+    metrics["metric_definitions"] = metric_definitions()
+    metrics["metric_scope"] = "chronological_holdout"
     metrics["training_rows"] = len(train_rows)
     metrics["testing_rows"] = len(test_rows)
     metrics["total_rows"] = len(rows)
+    metrics["actual_rows"] = len(actuals)
+    metrics["excluded_missing_lags"] = len(actuals) - len(rows)
+    metrics["feature_version"] = FEATURE_VERSION
+    metrics["evaluation_periods"] = [period_label(row) for row in test_rows]
     metrics["training_strategy"] = "rolling_cross_validation_then_final_full_dataset_training"
 
 

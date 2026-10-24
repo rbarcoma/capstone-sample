@@ -28,7 +28,7 @@ class ForecastPeriod
     {
         $period = self::next();
 
-        return ForecastResult::query()
+        return DatasetIntegrity::forecasts(ForecastResult::query())
             ->where('year', $period?->year ?? 0)
             ->where('month', $period?->month ?? 0);
     }
@@ -37,7 +37,7 @@ class ForecastPeriod
     {
         $period = self::next();
 
-        return ForecastResult::query()->where(function (Builder $query) use ($period) {
+        return DatasetIntegrity::forecasts(ForecastResult::query())->where(function (Builder $query) use ($period) {
             $query->where('year', '<', $period?->year ?? 0)
                 ->orWhere(function (Builder $query) use ($period) {
                     $query->where('year', $period?->year ?? 0)

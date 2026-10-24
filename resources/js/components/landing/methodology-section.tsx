@@ -28,7 +28,7 @@ const methodologyItems = [
     {
         icon: BrainCircuit,
         label: 'Forecast model',
-        title: 'Linear Regression',
+        title: 'Ridge (penalty 0.1)',
         description:
             'The active workflow standardizes lag, trend, seasonal, climate, solar, and peak-demand features for a next-month estimate.',
     },

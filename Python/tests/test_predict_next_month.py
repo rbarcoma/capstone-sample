@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import predict_next_month as predictor
+from monthly_features import FEATURE_VERSION
 
 
 class NextMonthPredictionTest(unittest.TestCase):
@@ -24,7 +25,7 @@ class NextMonthPredictionTest(unittest.TestCase):
         # A deterministic model makes it possible to verify that lag_1 is actual.
         with self.model.open("wb") as handle:
             pickle.dump({
-                "features": ["lag_1"], "means": {"lag_1": 0},
+                "feature_version": FEATURE_VERSION, "features": ["lag_1"], "means": {"lag_1": 0},
                 "stds": {"lag_1": 1}, "coefficients": [10, 1],
             }, handle)
 
@@ -62,9 +63,9 @@ class NextMonthPredictionTest(unittest.TestCase):
 
     def test_missing_historical_months_do_not_change_the_horizon(self):
         self.write_rows([(2026, 1), (2026, 4), (2026, 9)])
-        result = self.predict()
-        self.assertEqual((result["year"], result["month"]), (2026, 10))
-        self.assertEqual(result["previous_consumption_kwh"], 102)
+        # The target stays October, but August actuals are required for lag_2.
+        with self.assertRaisesRegex(ValueError, "Cannot forecast 2026-10"):
+            self.predict()
 
     def test_latest_period_is_chronological_not_last_csv_row(self):
         self.write_rows([(2026, 9), (2026, 7), (2026, 8)])
@@ -89,6 +90,32 @@ class NextMonthPredictionTest(unittest.TestCase):
         result = self.predict()
         self.assertEqual((result["year"], result["month"]), (2026, 11))
         self.assertEqual(result["previous_consumption_kwh"], 0)
+
+    def test_missing_label_uses_ridge_fallback_without_changing_prediction_or_artifacts(self):
+        self.write_rows([(2026, month) for month in range(4, 10)])
+        before = {path: path.read_bytes() for path in [self.dataset, self.model]}
+        prediction = self.predict()
+        self.assertEqual(prediction["model_type"], "Ridge (penalty 0.1)")
+        self.assertEqual(prediction["predicted_consumption_kwh"], 115)
+        self.assertEqual((prediction["year"], prediction["month"]), (2026, 10))
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+        self.assertFalse(self.metrics.exists())
+
+    def test_saved_legacy_labels_are_not_rewritten_or_replaced_by_the_new_fallback(self):
+        self.write_rows([(2026, month) for month in range(4, 10)])
+        model = pickle.loads(self.model.read_bytes())
+        model["model_type"] = "Linear Regression"
+        self.model.write_bytes(pickle.dumps(model))
+        for metrics in [None, {"model_type": "Legacy saved label", "mae": 7, "rmse": 8, "r2_score": -9}]:
+            with self.subTest(metrics=metrics):
+                if metrics is not None:
+                    self.metrics.write_text(json.dumps(metrics))
+                paths = [self.dataset, self.model] + ([self.metrics] if self.metrics.exists() else [])
+                before = {path: path.read_bytes() for path in paths}
+                prediction = self.predict()
+                self.assertEqual(prediction["model_type"], metrics["model_type"] if metrics else "Linear Regression")
+                self.assertEqual(prediction["predicted_consumption_kwh"], 115)
+                self.assertEqual({path: path.read_bytes() for path in before}, before)
 
 
 if __name__ == "__main__":

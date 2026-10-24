@@ -108,7 +108,7 @@ const illustrativeContract: LandingAnalyticsContract = {
         period: 'Next month',
         predictedConsumptionKwh: 4860,
         changePercent: 1.5,
-        modelType: 'Linear Regression',
+        modelType: 'Ridge (penalty 0.1)',
         mae: null,
         rmse: null,
         r2Score: null,

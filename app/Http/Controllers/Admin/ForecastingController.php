@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Support\ForecastMetrics;
 use App\Support\ForecastPeriod;
 use App\Support\MlWorkflow;
 use Illuminate\Http\Request;
@@ -14,6 +15,7 @@ class ForecastingController extends Controller
     public function index()
     {
         return Inertia::render('Admin/Forecasting', [
+            'metricDefinitions' => ForecastMetrics::definitions(),
             'latestForecast' => ForecastPeriod::current()->with('user:id,name')->latest('predicted_at')->first(),
             'forecastHistory' => ForecastPeriod::throughNext()->with('user:id,name')->latest('predicted_at')->take(20)->get(),
         ]);
@@ -27,7 +29,7 @@ class ForecastingController extends Controller
             return back()->with('error', $exception->getMessage());
         }
 
-        return back()->with('success', 'Model trained successfully. ' . ($result['output'] ?? ''));
+        return back()->with('success', 'Model trained successfully. '.($result['output'] ?? ''));
     }
 
     public function predict(Request $request)

@@ -34,7 +34,8 @@ class EnergyDss
         };
     }
 
-    public static function recommendations(ForecastResult $forecast, ?ProcessedRecord $latest, string $demand, string $readiness): array
+    /** Retained without threshold/unit changes; inactive pending verified 6b basis. */
+    private static function legacyRecommendations(ForecastResult $forecast, ?ProcessedRecord $latest, string $demand, string $readiness): array
     {
         $items = [];
         $actions = [];
@@ -80,47 +81,28 @@ class EnergyDss
         return [$items, $actions];
     }
 
+    public static function recommendations(ForecastResult $forecast, ?ProcessedRecord $latest, string $demand, string $readiness): array
+    {
+        // Existing threshold helpers are retained, but are not an evidence basis.
+        return DssEvidence::guidance();
+    }
+
     public static function generateForForecast(ForecastResult $forecast, ?int $userId = null, ?CarbonInterface $generatedAt = null): DssResult
     {
-        $latest = ProcessedRecord::query()
-            ->orderByDesc('year')
-            ->orderByDesc('month')
-            ->first();
-
-        $average = (float) ProcessedRecord::avg('consumption_kwh');
-
-        $demand = self::classifyDemand(
-            (float) $forecast->predicted_consumption_kwh,
-            $average
-        );
-
-        $readiness = self::readiness(
-            (float) ($latest?->solar_irradiance ?? 0),
-            (float) ($latest?->peak_demand_kw ?? 0),
-            (float) $forecast->predicted_consumption_kwh
-        );
-
-        [$recommendations, $actions] = self::recommendations(
-            $forecast,
-            $latest,
-            $demand,
-            $readiness
-        );
-
-        $dss = DssResult::updateOrCreate([
-            'forecast_result_id' => $forecast->id,
-        ], [
+        if (! $forecast->exists || $forecast->isDirty() || ! ($forecast = $forecast->fresh())) {
+            throw new \RuntimeException('A saved, unchanged forecast is required for DSS linkage.');
+        }
+        $latest = ProcessedRecord::query()->orderByDesc('year')->orderByDesc('month')->first();
+        $basis = DssEvidence::inspect($forecast, $latest);
+        [$recommendations, $actions] = DssEvidence::guidance();
+        // No engineering/unit thresholds are selected or changed by this gate.
+        $dss = DssResult::updateOrCreate(['forecast_result_id' => $forecast->id], [
             'user_id' => $userId,
-            'demand_status' => $demand,
-            'readiness_level' => $readiness,
+            'demand_status' => DssEvidence::NOT_ASSESSED,
+            'readiness_level' => DssEvidence::NOT_ASSESSED,
             'recommendations' => $recommendations,
             'priority_actions' => $actions,
-            'basis' => [
-                'predicted_consumption_kwh' => (float) $forecast->predicted_consumption_kwh,
-                'average_consumption_kwh' => $average,
-                'peak_demand_kw' => (float) ($latest?->peak_demand_kw ?? 0),
-                'solar_irradiance' => (float) ($latest?->solar_irradiance ?? 0),
-            ],
+            'basis' => $basis + ['source' => 'dss_generation'],
         ]);
 
         $generatedAt ??= now();

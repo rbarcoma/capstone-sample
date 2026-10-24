@@ -1,3 +1,4 @@
+import { displayValue } from '@/lib/display-value';
 import { StatCard } from '@/components/dss/stat-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -45,7 +46,7 @@ const monthNames = [
 
 function formatNumber(value: number | null | undefined) {
     if (value === null || value === undefined) {
-        return '-';
+        return 'Unavailable';
     }
 
     return new Intl.NumberFormat('en-US', {
@@ -67,7 +68,7 @@ function formatChartData(data: any[]) {
             item.average_consumption ??
             item.total_consumption ??
             item.predicted_consumption_kwh ??
-            0,
+            null,
     }));
 }
 
@@ -91,24 +92,23 @@ function ActualPredictedTooltip({ active, payload }: any) {
                 {monthNames[(item?.month ?? 1) - 1]} {item?.year}
             </div>
             <div className="space-y-1 text-muted-foreground">
+                {item?.issuance_label && <div>{item.issuance_label}</div>}
                 <div>
                     Actual Value:{' '}
                     <span className="font-medium text-emerald-700">
-                        {formatNumber(item?.actual)} kWh
+                        {item?.actual == null ? 'Unavailable' : `${formatNumber(item.actual)} kWh`}
                     </span>
                 </div>
                 <div>
-                    Predicted Value:{' '}
+                    Historical Fit (in-sample):{' '}
                     <span className="font-medium text-blue-700">
-                        {formatNumber(item?.predicted)} kWh
+                        {item?.fitted == null ? 'Unavailable' : `${formatNumber(item.fitted)} kWh`}
                     </span>
                 </div>
                 <div>
-                    Accuracy:{' '}
+                    Issued Estimate:{' '}
                     <span className="font-medium text-foreground">
-                        {item?.accuracy === null || item?.accuracy === undefined
-                            ? '-'
-                            : `${formatNumber(item.accuracy)}%`}
+                        {item?.issued_forecast == null ? 'Unavailable' : `${formatNumber(item.issued_forecast)} kWh`}
                     </span>
                 </div>
             </div>
@@ -127,8 +127,8 @@ function ActualPredictedChart({
 }) {
     const hasVisibleData = data.some(
         (item) =>
-            (showActual && item.actual !== null) ||
-            (showPredicted && item.predicted !== null),
+            (showActual && item.actual != null) ||
+            (showPredicted && (item.fitted != null || item.issued_forecast != null)),
     );
 
     if (!hasVisibleData) {
@@ -137,8 +137,8 @@ function ActualPredictedChart({
                 <div>
                     <p className="font-medium">No chart data available</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                        Try another month or year, or generate a forecast first
-                        to show predicted data.
+                        No actual, fitted, or issued estimate values are available
+                        for this selection.
                     </p>
                 </div>
             </div>
@@ -185,17 +185,30 @@ function ActualPredictedChart({
                         />
                     )}
                     {showPredicted && (
-                        <Line
-                            type="monotone"
-                            dataKey="predicted"
-                            name="Predicted Data"
-                            stroke="#2563eb"
-                            strokeWidth={3}
-                            dot={{ r: 3, strokeWidth: 2 }}
-                            activeDot={{ r: 6 }}
-                            connectNulls={false}
-                            animationDuration={700}
-                        />
+                        <>
+                            <Line
+                                type="monotone"
+                                dataKey="fitted"
+                                name="Historical Fit (in-sample)"
+                                stroke="#2563eb"
+                                strokeWidth={3}
+                                dot={{ r: 3, strokeWidth: 2 }}
+                                activeDot={{ r: 6 }}
+                                connectNulls={false}
+                                animationDuration={700}
+                            />
+                            <Line
+                                type="monotone"
+                                dataKey="issued_forecast"
+                                name="Issued Estimate"
+                                stroke="#2563eb"
+                                strokeWidth={3}
+                                dot={{ r: 3, strokeWidth: 2 }}
+                                activeDot={{ r: 6 }}
+                                connectNulls={false}
+                                animationDuration={700}
+                            />
+                        </>
                     )}
                 </LineChart>
             </ResponsiveContainer>
@@ -272,10 +285,7 @@ function AnalyticsChart({
                                     <div className="text-muted-foreground">
                                         {valueLabel}:{' '}
                                         <span className="font-medium text-emerald-700">
-                                            {formatNumber(
-                                                Number(payload[0]?.value ?? 0),
-                                            )}{' '}
-                                            kWh
+                                            {payload[0]?.value == null ? 'Unavailable' : `${formatNumber(Number(payload[0].value))} kWh`}
                                         </span>
                                     </div>
                                 </div>
@@ -325,7 +335,7 @@ export default function Analytics({
     }, [actualPredictedTrend, selectedMonth, selectedYear]);
 
     const hasPredictedForSelection = filteredActualPredictedTrend.some(
-        (item: any) => item.predicted !== null,
+        (item: any) => item.fitted != null || item.issued_forecast != null,
     );
     const analyticsInfo = {
         averageConsumption: {
@@ -357,15 +367,16 @@ export default function Analytics({
                     Consumption Analytics
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                    Historical consumption, seasonal behavior, and peak demand
-                    insights.
+                    Historical consumption, seasonal behavior, and peak demand insights.
+                    Summaries, yearly/seasonal figures and peak demand use all available actual data;
+                    month/year selections filter only the comparison chart.
                 </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-4">
                 <StatCard
                     title="Average Consumption"
-                    value={`${summary?.average_consumption ?? 0} kWh`}
+                    value={displayValue(summary?.average_consumption, ' kWh')}
                     onInfoClick={() =>
                         setInfoModal(analyticsInfo.averageConsumption)
                     }
@@ -373,7 +384,7 @@ export default function Analytics({
 
                 <StatCard
                     title="Highest Consumption"
-                    value={`${summary?.highest_consumption ?? 0} kWh`}
+                    value={displayValue(summary?.highest_consumption, ' kWh')}
                     helper={
                         summary?.highest_consumption_year &&
                         summary?.highest_consumption_month
@@ -389,7 +400,7 @@ export default function Analytics({
 
                 <StatCard
                     title="Average Peak Demand"
-                    value={`${summary?.average_peak_demand ?? 0} kW`}
+                    value={displayValue(summary?.average_peak_demand, ' kW')}
                     onInfoClick={() =>
                         setInfoModal(analyticsInfo.averagePeakDemand)
                     }
@@ -397,7 +408,7 @@ export default function Analytics({
 
                 <StatCard
                     title="Avg Solar Irradiance"
-                    value={summary?.average_solar_irradiance ?? 0}
+                    value={displayValue(summary?.average_solar_irradiance)}
                     onInfoClick={() =>
                         setInfoModal(analyticsInfo.averageSolarIrradiance)
                     }
@@ -408,10 +419,10 @@ export default function Analytics({
                 <Card className="rounded-lg xl:col-span-2">
                     <CardHeader className="gap-4 md:flex-row md:items-center md:justify-between">
                         <div>
-                            <CardTitle>Actual vs Predicted Consumption</CardTitle>
+                            <CardTitle>Actual, Fitted and Issued Consumption</CardTitle>
                             <p className="mt-1 text-sm text-muted-foreground">
-                                Actual dataset values compared with saved machine
-                                learning forecast results.
+                                Historical fits are in-sample, not out-of-sample evaluation.
+                                Issued estimates are saved results; their production time is shown separately.
                             </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-3">
@@ -469,7 +480,7 @@ export default function Analytics({
                                         setShowPredicted(Boolean(checked))
                                     }
                                 />
-                                Predicted Data
+                                Fitted / Issued Values
                             </label>
                         </div>
                     </CardHeader>
@@ -481,7 +492,7 @@ export default function Analytics({
                         />
                         {showPredicted && !hasPredictedForSelection && (
                             <div className="mt-4 rounded-md border border-dashed bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
-                                No predicted data is available for the selected
+                                No fitted or issued values are available for the selected
                                 month or year.
                             </div>
                         )}

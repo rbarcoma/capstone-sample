@@ -2,14 +2,24 @@
     $summary = $report->summary ?? [];
     $analytics = data_get($summary, 'analytics', []);
     $forecast = data_get($summary, 'latest_forecast', []);
+    // Use this report's saved snapshot, never the current forecast or report date.
+    $issuanceLabel = \App\Support\ForecastIssuance::label(is_array($forecast) ? $forecast : []);
     $dss = data_get($summary, 'latest_dss', []);
     $datasetProcessing = data_get($summary, 'dataset_processing', []);
     $forecastAccuracy = data_get($summary, 'forecast_accuracy', []);
+    $metricDefinitions = data_get($forecastAccuracy, 'metric_definitions', \App\Support\ForecastMetrics::definitions());
     $predictionExplanation = data_get($summary, 'prediction_explanation', []);
     $dssReasoning = data_get($summary, 'dss_reasoning', []);
     $statuses = data_get($summary, 'statuses', []);
 
-    $averageConsumption = data_get($analytics, 'average_consumption_kwh', data_get($summary, 'average_consumption', 0));
+    // New snapshots preserve missing quantities; legacy snapshots retain their
+    // original formatting and saved explanations without retroactive rewriting.
+    $evidenceAware = data_get($dssReasoning, 'rule_version') === \App\Support\DssEvidence::RULE_VERSION;
+    $legacyNotice = $evidenceAware ? '' : 'Historical / unqualified evidence. Original saved conclusions are retained for historical reference; they are not a current assessment or validated evidence of forecast reliability, readiness, feasibility or savings. ';
+    $quantity = fn ($value, $suffix = '') => $evidenceAware
+        ? \App\Support\DssEvidence::display($value, $suffix)
+        : number_format((float) ($value ?? 0), 2).$suffix;
+    $averageConsumption = data_get($analytics, 'average_consumption_kwh', data_get($summary, 'average_consumption'));
     $recommendations = data_get($dss, 'recommendations', []);
     $priorityActions = data_get($dss, 'priority_actions', []);
     $features = data_get($predictionExplanation, 'features', []);
@@ -87,7 +97,7 @@
         <section class="section">
             <h2>Report Basis</h2>
             <p class="muted">
-                {{ data_get($summary, 'report_basis', 'This report is based on analytics, forecasting, and DSS records available when the report was generated.') }}
+                {{ $legacyNotice }}{{ data_get($summary, 'report_basis', 'This report is based on analytics, forecasting, and DSS records available when the report was generated.') }}
             </p>
             <div>
                 <span class="status">Data: {{ data_get($statuses, 'data_status', 'Pending') }}</span>
@@ -129,19 +139,19 @@
             <div class="grid">
                 <div class="metric">
                     <span>Average Consumption</span>
-                    <strong>{{ number_format((float) $averageConsumption, 2) }} kWh</strong>
+                    <strong>{{ $quantity($averageConsumption, ' kWh') }}</strong>
                 </div>
                 <div class="metric">
                     <span>Highest Consumption</span>
-                    <strong>{{ number_format((float) data_get($analytics, 'highest_consumption_kwh', 0), 2) }} kWh</strong>
+                    <strong>{{ $quantity(data_get($analytics, 'highest_consumption_kwh'), ' kWh') }}</strong>
                 </div>
                 <div class="metric">
                     <span>Average Peak Demand</span>
-                    <strong>{{ number_format((float) data_get($analytics, 'average_peak_demand_kw', 0), 2) }} kW</strong>
+                    <strong>{{ $quantity(data_get($analytics, 'average_peak_demand_kw'), ' kW') }}</strong>
                 </div>
                 <div class="metric">
                     <span>Average Solar Irradiance</span>
-                    <strong>{{ number_format((float) data_get($analytics, 'average_solar_irradiance', 0), 2) }}</strong>
+                    <strong>{{ $quantity(data_get($analytics, 'average_solar_irradiance'), '') }}</strong>
                 </div>
             </div>
             <p class="muted">
@@ -152,6 +162,7 @@
 
         <section class="section">
             <h2>Forecasting Result</h2>
+            <p class="muted">{{ $evidenceAware ? '' : 'Recorded timing context (presentation only, derived from this snapshot): ' }}{{ $issuanceLabel }}</p>
             <table>
                 <thead>
                     <tr>
@@ -168,13 +179,13 @@
                 <tbody>
                     <tr>
                         <td>{{ $period }}</td>
-                        <td>{{ number_format((float) data_get($forecast, 'predicted_consumption_kwh', 0), 2) }} kWh</td>
-                        <td>{{ number_format((float) data_get($forecast, 'previous_consumption_kwh', 0), 2) }} kWh</td>
-                        <td>{{ number_format((float) data_get($forecast, 'change_percent', 0), 2) }}%</td>
+                        <td>{{ $quantity(data_get($forecast, 'predicted_consumption_kwh'), ' kWh') }}</td>
+                        <td>{{ $quantity(data_get($forecast, 'previous_consumption_kwh'), ' kWh') }}</td>
+                        <td>{{ $quantity(data_get($forecast, 'change_percent'), '%') }}</td>
                         <td>{{ data_get($forecast, 'model_type', 'No model') }}</td>
-                        <td>{{ number_format((float) data_get($forecast, 'mae', data_get($forecastAccuracy, 'mae', 0)), 4) }}</td>
-                        <td>{{ number_format((float) data_get($forecast, 'rmse', 0), 4) }}</td>
-                        <td>{{ number_format((float) data_get($forecast, 'r2_score', data_get($forecastAccuracy, 'r2_score', 0)), 4) }}</td>
+                        <td>{{ \App\Support\ForecastMetrics::display(data_get($forecast, 'mae', data_get($forecastAccuracy, 'mae'))) }}</td>
+                        <td>{{ \App\Support\ForecastMetrics::display(data_get($forecast, 'rmse', data_get($forecastAccuracy, 'rmse'))) }}</td>
+                        <td>{{ \App\Support\ForecastMetrics::display(data_get($forecast, 'r2_score', data_get($forecastAccuracy, 'r2_score'))) }}</td>
                     </tr>
                 </tbody>
             </table>
@@ -185,18 +196,19 @@
             <div class="three">
                 <div class="metric">
                     <span>MAE</span>
-                    <strong>{{ number_format((float) data_get($forecastAccuracy, 'mae', data_get($forecast, 'mae', 0)), 4) }}</strong>
+                    <strong>{{ \App\Support\ForecastMetrics::display(data_get($forecastAccuracy, 'mae', data_get($forecast, 'mae'))) }}</strong>
                 </div>
                 <div class="metric">
                     <span>RMSE</span>
-                    <strong>{{ number_format((float) data_get($forecastAccuracy, 'rmse', data_get($forecast, 'rmse', 0)), 4) }}</strong>
+                    <strong>{{ \App\Support\ForecastMetrics::display(data_get($forecastAccuracy, 'rmse', data_get($forecast, 'rmse'))) }}</strong>
                 </div>
                 <div class="metric">
                     <span>R2 Score</span>
-                    <strong>{{ number_format((float) data_get($forecastAccuracy, 'r2_score', data_get($forecast, 'r2_score', 0)), 4) }}</strong>
+                    <strong>{{ \App\Support\ForecastMetrics::display(data_get($forecastAccuracy, 'r2_score', data_get($forecast, 'r2_score'))) }}</strong>
                 </div>
             </div>
             <p class="muted">{{ data_get($forecastAccuracy, 'interpretation', 'Model accuracy interpretation is unavailable.') }}</p>
+            <p class="muted">{{ $evidenceAware ? '' : (data_get($forecastAccuracy, 'metric_definitions') === null ? 'Current explanatory metric context (presentation only, not part of the saved assessment): ' : 'Saved metric context (historical, not revalidated): ') }}{{ data_get($metricDefinitions, 'mae') }} {{ data_get($metricDefinitions, 'rmse') }} {{ data_get($metricDefinitions, 'r2_score') }} {{ data_get($metricDefinitions, 'fold_average') }} {{ data_get($metricDefinitions, 'scope') }} {{ data_get($metricDefinitions, 'legacy') }}</p>
         </section>
 
         <section class="section">
@@ -214,6 +226,7 @@
 
         <section class="section">
             <h2>Decision Support Assessment</h2>
+            <p class="muted">{{ $evidenceAware ? '' : 'Historical / unqualified evidence. Recorded timing context (presentation only): ' }}Estimate basis: {{ $issuanceLabel }} Assessment generated: {{ data_get($dss, 'updated_at') ?? data_get($dss, 'created_at') ?? 'unavailable' }}.</p>
             <div class="two">
                 <div class="metric">
                     <span>Demand Status</span>

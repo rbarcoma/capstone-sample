@@ -319,7 +319,7 @@ export function HeroSection({
                     </h1>
                     <p className="mt-6 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg sm:leading-8">
                         DSS Energy turns historical electricity and climate data
-                        into clear consumption analytics, a Linear Regression
+                        into clear consumption analytics, a Ridge (penalty 0.1)
                         estimate for the next month, and transparent rule-based
                         recommendations for planning conversations.
                     </p>
